@@ -39,6 +39,7 @@ export function scoreOne(pred, resultados) {
   for (const p of partidosG) {
     const r = resultados.groups[p.id];
     if (!r) continue;
+    if (p.goles_local == null || p.goles_visitante == null) continue; // partido bloqueado: no lo pronosticó, no puntúa
     const pl = Number(p.goles_local), pv = Number(p.goles_visitante);
     if (sign(pl, pv) === sign(r.gl, r.gv)) { pts += 1; detail.grupos += 1; }
     if (pl === r.gl && pv === r.gv) exactos += 1;
