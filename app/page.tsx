@@ -675,7 +675,7 @@ function resolveTeams(matchId, r32map, picks) {
    servidor valida la fecha de corte y el "una sola vez".
    ==================================================================================== */
 
-const DEADLINE = new Date("2026-06-11T16:00:00-03:00");
+const DEADLINE = new Date("2026-06-15T00:00:00-03:00"); // domingo 14/06 a las 24:00
 const prodeCerrado = () => Date.now() >= DEADLINE.getTime();
 
 async function buscarEmpleado(dni) {
@@ -715,6 +715,21 @@ async function obtenerPrediccion(dni) {
   if (error) { console.error(error); throw error; }
   return Array.isArray(data) ? (data[0] || null) : (data || null);
 }
+
+// Partidos de grupo que YA se jugaron (tienen resultado cargado) -> se bloquean.
+async function partidosJugados() {
+  const { data, error } = await supabase
+    .from("resultados")
+    .select("match_id, goles_local, goles_visitante");
+  if (error) { console.error(error); return {}; }
+  const out = {};
+  for (const r of data || []) {
+    if (r.match_id && r.match_id.startsWith("G-") && r.goles_local != null && r.goles_visitante != null) {
+      out[r.match_id] = { hs: Number(r.goles_local), as: Number(r.goles_visitante) };
+    }
+  }
+  return out; // { 'G-A-1': {hs, as}, ... }
+}
 /* ------------------------------- UI: ÁTOMOS ------------------------------- */
 
 const ROUND_TITLES = { R32:"16avos de final", R16:"Octavos de final", QF:"Cuartos de final", SF:"Semifinales", "3P":"Tercer puesto", F:"Final" };
@@ -734,8 +749,22 @@ function ScoreBox({ value, onChange, disabled }) {
   );
 }
 
-function MatchRow({ home, away, score, onScore }) {
+function MatchRow({ home, away, score, onScore, locked }) {
   const s = score || { hs:null, as:null };
+  if (locked) {
+    return (
+      <div className="py-2 px-3 rounded-lg bg-slate-900/60 border border-slate-800">
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex-1 text-right text-sm text-slate-300 truncate">{tn(home)}</span>
+          <span className="w-9 h-9 flex items-center justify-center rounded-md bg-slate-800 text-emerald-300 font-bold">{s.hs}</span>
+          <span className="text-slate-500 text-xs">–</span>
+          <span className="w-9 h-9 flex items-center justify-center rounded-md bg-slate-800 text-emerald-300 font-bold">{s.as}</span>
+          <span className="flex-1 text-left text-sm text-slate-300 truncate">{tn(away)}</span>
+        </div>
+        <p className="text-[10px] text-amber-400 text-center mt-1">🔒 ya se jugó · no suma puntos para vos</p>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center justify-between gap-2 py-2 px-3 rounded-lg bg-slate-900 border border-slate-800">
       <span className="flex-1 text-right text-sm text-slate-100 truncate">{tn(home)}</span>
@@ -749,7 +778,7 @@ function MatchRow({ home, away, score, onScore }) {
 
 /* --------------------------- UI: FASE DE GRUPOS --------------------------- */
 
-function GroupCard({ group, scores, setScore, standing }) {
+function GroupCard({ group, scores, setScore, standing, bloqueados }) {
   const matches = useMemo(() => generateGroupMatches().filter(m => m.group === group), [group]);
   const done = groupComplete(group, scores);
   return (
@@ -763,7 +792,8 @@ function GroupCard({ group, scores, setScore, standing }) {
       <div className="p-3 space-y-2">
         {matches.map(m => (
           <MatchRow key={m.id} home={m.home} away={m.away}
-            score={scores[m.id]} onScore={s => setScore(m.id, s)} />
+            score={scores[m.id]} onScore={s => setScore(m.id, s)}
+            locked={bloqueados && bloqueados.has(m.id)} />
         ))}
       </div>
       <div className="px-3 pb-3">
@@ -794,9 +824,10 @@ function GroupCard({ group, scores, setScore, standing }) {
   );
 }
 
-function GroupStage({ scores, setScore, allStand, complete, onContinue }) {
+function GroupStage({ scores, setScore, allStand, complete, onContinue, bloqueados }) {
   const filledCount = useMemo(() =>
     generateGroupMatches().filter(m => scores[m.id] && scores[m.id].hs != null && scores[m.id].as != null).length, [scores]);
+  const hayBloqueados = bloqueados && bloqueados.size > 0;
   return (
     <div className="max-w-5xl mx-auto px-4 py-6">
       <div className="flex items-center justify-between mb-4">
@@ -809,9 +840,14 @@ function GroupStage({ scores, setScore, allStand, complete, onContinue }) {
           Ir a Eliminatorias →
         </button>
       </div>
+      {hayBloqueados && (
+        <div className="rounded-xl bg-amber-950 border border-amber-700 text-amber-300 text-sm px-4 py-3 mb-4">
+          🔒 Los partidos que ya se jugaron aparecen con su resultado real y no se pueden cargar. Como no los pudiste pronosticar, esos no te suman puntos. Completá el resto.
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {GROUP_IDS.map(g => (
-          <GroupCard key={g} group={g} scores={scores} setScore={setScore} standing={allStand[g]} />
+          <GroupCard key={g} group={g} scores={scores} setScore={setScore} standing={allStand[g]} bloqueados={bloqueados} />
         ))}
       </div>
     </div>
@@ -990,7 +1026,7 @@ function ReadOnlyProde({ pred, usuario, dni }) {
               {byGroup[g].map(p => (
                 <div key={p.id} className="flex items-center justify-between text-sm py-1 gap-2">
                   <span className="text-slate-300 truncate flex-1">{tn(p.equipo_local)}</span>
-                  <span className="font-bold">{p.goles_local} - {p.goles_visitante}</span>
+                  <span className="font-bold">{p.goles_local == null ? "🔒" : `${p.goles_local} - ${p.goles_visitante}`}</span>
                   <span className="text-slate-300 truncate flex-1 text-right">{tn(p.equipo_visitante)}</span>
                 </div>
               ))}
@@ -1031,6 +1067,7 @@ export default function ProdeMundial2026() {
   const [loginError, setLoginError] = useState(null);
   const [cerrado, setCerrado] = useState(prodeCerrado()); // (3) fecha de corte
   const [scores, setScores] = useState({});    // matchId -> {hs, as}
+  const [bloqueados, setBloqueados] = useState(new Set()); // partidos de grupo ya jugados (no editables, no puntúan)
   const [rawPicks, setRawPicks] = useState({}); // matchId -> teamId ganador
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
@@ -1045,7 +1082,10 @@ export default function ProdeMundial2026() {
     return () => clearInterval(t);
   }, [cerrado]);
 
-  const setScore = useCallback((id, s) => setScores(prev => ({ ...prev, [id]: s })), []);
+  const setScore = useCallback((id, s) => {
+    if (bloqueados.has(id)) return; // partido ya jugado: no editable
+    setScores(prev => ({ ...prev, [id]: s }));
+  }, [bloqueados]);
 
   const complete = useMemo(() => allGroupsComplete(scores), [scores]);
 
@@ -1099,6 +1139,10 @@ export default function ProdeMundial2026() {
         return;
       }
       if (cerrado) { setStep("cerrado"); return; } // no jugó y ya cerró
+      // Bloquear los partidos que ya se jugaron (con su resultado real)
+      const jugados = await partidosJugados();
+      setBloqueados(new Set(Object.keys(jugados)));
+      if (Object.keys(jugados).length) setScores(prev => ({ ...prev, ...jugados }));
       setStep("groups");
     } catch (e) {
       console.error(e);
@@ -1120,10 +1164,15 @@ export default function ProdeMundial2026() {
         apellido: usuario?.apellido ?? "", // (4) para el Ranking
         predicciones: {
           fase_grupos: {
-            partidos: generateGroupMatches().map(m => ({
-              id: m.id, grupo: m.group, equipo_local: m.home, equipo_visitante: m.away,
-              goles_local: scores[m.id]?.hs ?? 0, goles_visitante: scores[m.id]?.as ?? 0,
-            })),
+            partidos: generateGroupMatches().map(m => {
+              const bloq = bloqueados.has(m.id); // ya jugado: no es pronóstico del usuario
+              return {
+                id: m.id, grupo: m.group, equipo_local: m.home, equipo_visitante: m.away,
+                goles_local: bloq ? null : (scores[m.id]?.hs ?? 0),
+                goles_visitante: bloq ? null : (scores[m.id]?.as ?? 0),
+                bloqueado: bloq || undefined,
+              };
+            }),
             posiciones: Object.fromEntries(GROUP_IDS.map(g => [g, allStand[g].map((s,i) => ({
               posicion: i+1, equipo: s.team, puntos: s.pts, diferencia_goles: s.gd, goles_favor: s.gf,
             }))])),
@@ -1212,7 +1261,7 @@ export default function ProdeMundial2026() {
 
       {step === "groups" && (
         <GroupStage scores={scores} setScore={setScore} allStand={allStand}
-          complete={complete} onContinue={() => setStep("knockout")} />
+          complete={complete} onContinue={() => setStep("knockout")} bloqueados={bloqueados} />
       )}
 
       {step === "knockout" && r32 && (
