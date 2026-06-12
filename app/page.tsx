@@ -708,6 +708,13 @@ async function savePrediction(payload) {
   }
   return { ok: true };
 }
+
+// Trae el pronóstico ya guardado de un DNI (para verlo en modo solo-lectura).
+async function obtenerPrediccion(dni) {
+  const { data, error } = await supabase.rpc("obtener_prediccion", { p_dni: String(dni).trim() });
+  if (error) { console.error(error); throw error; }
+  return Array.isArray(data) ? (data[0] || null) : (data || null);
+}
 /* ------------------------------- UI: ÁTOMOS ------------------------------- */
 
 const ROUND_TITLES = { R32:"16avos de final", R16:"Octavos de final", QF:"Cuartos de final", SF:"Semifinales", "3P":"Tercer puesto", F:"Final" };
@@ -914,31 +921,28 @@ function KnockoutStage({ r32, r32map, picks, onPick, onBack }) {
 
 function LoginScreen({ onLogin, loading, error, cerrado }) {
   const [dni, setDni] = useState("");
-  const ok = dni.length >= 6 && !loading && !cerrado;
+  const ok = dni.length >= 6 && !loading;
   return (
     <div className="min-h-screen flex items-center justify-center px-4">
       <div className="w-full max-w-sm rounded-3xl bg-slate-950 border border-slate-800 p-8 text-center">
         <div className="text-5xl mb-3">🏆</div>
         <h1 className="text-2xl font-black text-white" style={{ fontFamily: "Georgia, serif" }}>PRODE MUNDIAL 2026</h1>
         <p className="text-sm text-slate-400 mt-1 mb-6">48 selecciones · cruces oficiales FIFA</p>
-        {cerrado ? (
-          <div className="rounded-xl bg-amber-950 border border-amber-700 text-amber-300 text-sm px-4 py-4">
-            🔒 El prode está cerrado.<br />El plazo de carga finalizó el 11/06/2026 a las 16:00 hs.
+        {cerrado && (
+          <div className="rounded-xl bg-amber-950 border border-amber-700 text-amber-300 text-xs px-3 py-2 mb-4">
+            El prode está cerrado. Si ya jugaste, entrá con tu DNI para ver tu pronóstico.
           </div>
-        ) : (
-          <>
-            <input value={dni} onChange={e => setDni(e.target.value.replace(/\D/g,""))}
-              onKeyDown={e => { if (e.key === "Enter" && ok) onLogin(dni); }}
-              placeholder="Ingresá tu DNI" inputMode="numeric"
-              className="w-full px-4 py-3 rounded-xl bg-slate-800 text-white text-center border border-slate-600 focus:border-emerald-400 focus:outline-none mb-3" />
-            {error && <p className="text-sm text-red-400 mb-3">{error}</p>}
-            <button onClick={() => ok && onLogin(dni)} disabled={!ok}
-              className={`w-full py-3 rounded-xl font-bold ${ok ? "bg-emerald-500 text-slate-950 hover:bg-emerald-400" : "bg-slate-800 text-slate-500"}`}>
-              {loading ? "Validando…" : "Ingresar"}
-            </button>
-            <p className="text-[11px] text-slate-600 mt-4">Solo los DNI habilitados en el padrón pueden participar.</p>
-          </>
         )}
+        <input value={dni} onChange={e => setDni(e.target.value.replace(/\D/g,""))}
+          onKeyDown={e => { if (e.key === "Enter" && ok) onLogin(dni); }}
+          placeholder="Ingresá tu DNI" inputMode="numeric"
+          className="w-full px-4 py-3 rounded-xl bg-slate-800 text-white text-center border border-slate-600 focus:border-emerald-400 focus:outline-none mb-3" />
+        {error && <p className="text-sm text-red-400 mb-3">{error}</p>}
+        <button onClick={() => ok && onLogin(dni)} disabled={!ok}
+          className={`w-full py-3 rounded-xl font-bold ${ok ? "bg-emerald-500 text-slate-950 hover:bg-emerald-400" : "bg-slate-800 text-slate-500"}`}>
+          {loading ? "Validando…" : "Ingresar"}
+        </button>
+        <a href="/ranking" className="block mt-4 text-sm text-emerald-400 hover:underline">Ver ranking →</a>
       </div>
     </div>
   );
@@ -957,6 +961,68 @@ function sanitizePicks(raw, r32map) {
   return p;
 }
 
+function ReadOnlyProde({ pred, usuario, dni }) {
+  const fg = pred?.predicciones?.fase_grupos?.partidos || [];
+  const fe = pred?.predicciones?.fase_eliminatoria?.partidos || [];
+  const campeon = pred?.predicciones?.fase_eliminatoria?.campeon;
+  const byGroup = {};
+  fg.forEach(p => { (byGroup[p.grupo] = byGroup[p.grupo] || []).push(p); });
+  const koByRound = {};
+  fe.forEach(p => { (koByRound[p.ronda] = koByRound[p.ronda] || []).push(p); });
+  const rounds = ["R32","R16","QF","SF","3P","F"];
+  return (
+    <div className="min-h-screen bg-slate-900 text-slate-100 pb-16">
+      <header className="sticky top-0 z-20 bg-slate-950 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+        <span className="font-black tracking-tight" style={{ fontFamily: "Georgia, serif" }}>🏆 PRODE 2026</span>
+        <a href="/ranking" className="text-xs text-emerald-400 hover:underline">Ver ranking →</a>
+      </header>
+      <div className="max-w-3xl mx-auto px-4 py-6">
+        <div className="rounded-2xl bg-slate-950 border border-emerald-700 p-4 mb-6">
+          <p className="font-bold">{usuario ? `${usuario.nombre} ${usuario.apellido}` : `DNI ${dni}`}</p>
+          <p className="text-xs text-slate-400">Tu prode ya fue enviado · no se puede modificar 🔒</p>
+        </div>
+
+        <h2 className="text-lg font-black mb-3">Fase de grupos</h2>
+        <div className="grid sm:grid-cols-2 gap-3 mb-8">
+          {GROUP_IDS.filter(g => byGroup[g]).map(g => (
+            <div key={g} className="rounded-xl bg-slate-950 border border-slate-800 p-3">
+              <p className="text-emerald-400 font-bold mb-2">Grupo {g}</p>
+              {byGroup[g].map(p => (
+                <div key={p.id} className="flex items-center justify-between text-sm py-1 gap-2">
+                  <span className="text-slate-300 truncate flex-1">{tn(p.equipo_local)}</span>
+                  <span className="font-bold">{p.goles_local} - {p.goles_visitante}</span>
+                  <span className="text-slate-300 truncate flex-1 text-right">{tn(p.equipo_visitante)}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+
+        <h2 className="text-lg font-black mb-3">Eliminatorias</h2>
+        {rounds.filter(r => koByRound[r]).map(r => (
+          <div key={r} className="mb-4">
+            <p className="text-emerald-400 font-bold mb-1">{ROUND_TITLES[r]}</p>
+            <div className="grid sm:grid-cols-2 gap-2">
+              {koByRound[r].map(p => (
+                <div key={p.id} className="rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-sm">
+                  <span className={p.ganador === p.equipo_1 ? "text-emerald-300 font-bold" : "text-slate-500"}>{tn(p.equipo_1)}</span>
+                  <span className="text-slate-600"> vs </span>
+                  <span className={p.ganador === p.equipo_2 ? "text-emerald-300 font-bold" : "text-slate-500"}>{tn(p.equipo_2)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        <div className="rounded-2xl bg-amber-950 border border-amber-700 p-4 text-center mt-6">
+          <p className="text-xs text-amber-400 mb-1">Tu campeón</p>
+          <p className="text-2xl font-black text-amber-300">{tn(campeon)}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ProdeMundial2026() {
   const [step, setStep] = useState("login");   // login | groups | knockout
   const [dni, setDni] = useState("");
@@ -968,6 +1034,7 @@ export default function ProdeMundial2026() {
   const [rawPicks, setRawPicks] = useState({}); // matchId -> teamId ganador
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  const [miPrediccion, setMiPrediccion] = useState(null); // prode guardado (vista solo-lectura)
   const [toast, setToast] = useState(null);
 
   // (3) Re-chequea la fecha de corte mientras la pestaña está abierta y,
@@ -1026,7 +1093,12 @@ export default function ProdeMundial2026() {
       setUsuario(emp);
       setDni(emp.dni);
       const env = await consultarEnvio(emp.dni);
-      if (env.enviado) { setDone(true); return; }  // (2) ya envió → bloqueado
+      if (env.enviado) {                         // ya jugó → traemos su prode para mostrarlo
+        try { setMiPrediccion(await obtenerPrediccion(emp.dni)); } catch (_) {}
+        setDone(true);
+        return;
+      }
+      if (cerrado) { setStep("cerrado"); return; } // no jugó y ya cerró
       setStep("groups");
     } catch (e) {
       console.error(e);
@@ -1081,6 +1153,7 @@ export default function ProdeMundial2026() {
   };
 
   if (done) {
+    if (miPrediccion) return <ReadOnlyProde pred={miPrediccion} usuario={usuario} dni={dni} />;
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center px-4">
         <div className="max-w-sm w-full rounded-3xl bg-slate-950 border border-emerald-700 p-8 text-center">
@@ -1090,13 +1163,29 @@ export default function ProdeMundial2026() {
             {usuario ? `${usuario.nombre} ${usuario.apellido} · DNI ${dni}` : `DNI ${dni}`}
           </p>
           {champion ? (
-            <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4">
+            <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4 mb-5">
               <p className="text-xs text-slate-500 mb-1">Tu campeón</p>
               <p className="text-2xl font-black text-amber-300">{champion.f} {champion.n}</p>
             </div>
           ) : (
-            <p className="text-sm text-slate-400">Este DNI ya tiene un prode cargado. El envío es de una sola vez, así que no admite modificaciones.</p>
+            <p className="text-sm text-slate-400 mb-5">Este DNI ya tiene un prode cargado. El envío es de una sola vez, así que no admite modificaciones.</p>
           )}
+          <a href="/ranking" className="inline-block px-5 py-2 rounded-xl bg-emerald-500 text-slate-950 font-bold">Ver ranking →</a>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "cerrado") {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center px-4">
+        <div className="max-w-sm w-full rounded-3xl bg-slate-950 border border-amber-700 p-8 text-center">
+          <div className="text-5xl mb-3">⏰</div>
+          <h1 className="text-2xl font-black text-white">Prode cerrado</h1>
+          <p className="text-slate-400 mt-2 mb-5">
+            {usuario ? `${usuario.nombre}, el` : "El"} plazo de carga finalizó el 11/06/2026 a las 16:00 hs y no llegaste a enviar tu prode.
+          </p>
+          <a href="/ranking" className="inline-block px-5 py-2 rounded-xl bg-emerald-500 text-slate-950 font-bold">Ver ranking →</a>
         </div>
       </div>
     );
