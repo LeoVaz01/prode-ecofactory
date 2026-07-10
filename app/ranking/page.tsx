@@ -1,9 +1,19 @@
-import { supabase } from "../supabaseClient";
+import { createClient } from "@supabase/supabase-js";
 import { scoreOne, normalizeResultados } from "../scoring";
 
+// ---- Sin caché: la página se recalcula en CADA visita ----
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
 
 export default async function RankingPage() {
+  // Cliente creado acá, sin caché, para que siempre lea datos frescos de Supabase
+  const supabase = createClient(
+    "https://tqlcfmrtszgrtmnuydhl.supabase.co",
+    "sb_publishable_5zzjcayXXzXzRxeWO6V08Q_-c5GE-cA",
+    { global: { fetch: (url: any, opts: any = {}) => fetch(url, { ...opts, cache: "no-store" }) } }
+  );
+
   const [predRes, resRes] = await Promise.all([
     supabase.rpc("listar_predicciones"),
     supabase.from("resultados").select("match_id, goles_local, goles_visitante, ganador"),
@@ -32,6 +42,8 @@ export default async function RankingPage() {
       b.pts - a.pts ||
       b.exactos - a.exactos ||
       String(a.apellido || "").localeCompare(String(b.apellido || "")));
+
+  const actualizado = new Date().toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" });
 
   return (
     <div style={{ minHeight: "100vh" }} className="bg-slate-900 text-slate-100 pb-16">
@@ -73,6 +85,7 @@ export default async function RankingPage() {
         <p className="text-center text-[11px] text-slate-600 mt-4">
           Grupos: 1 pto por acertar el signo (gana/empata/pierde) · 16avos 3 · Octavos 5 · Cuartos 7 · Semis 8 · 3.º puesto 9 · Campeón 10. Desempate: más marcadores exactos.
         </p>
+        <p className="text-center text-[10px] text-slate-700 mt-2">Actualizado: {actualizado}</p>
       </div>
     </div>
   );
